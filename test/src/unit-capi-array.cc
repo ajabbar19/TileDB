@@ -753,10 +753,13 @@ TEST_CASE_METHOD(
     encryption_key_ = nullptr;
   }
 
+// TODO
+/*
   SECTION("- with encryption") {
     encryption_type_ = TILEDB_AES_256_GCM;
     encryption_key_ = "0123456789abcdeF0123456789abcdeF";
   }
+*/
 
   create_temp_dir(temp_dir);
 
@@ -819,6 +822,8 @@ TEST_CASE_METHOD(
   // Get timestamp after first write
   auto timestamp = TILEDB_TIMESTAMP_NOW_MS;
   std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+  std::cerr << "******************* JOE UPDATING ************" << std::endl;
 
   // ---- UPDATE ----
   int buffer_upd[] = {50, 60, 70};
@@ -901,7 +906,11 @@ TEST_CASE_METHOD(
 
   // Check correctness
   int buffer_read_c[] = {1, 2, 3, 4, 50, 60, 70, 8, 9, 10};
-  CHECK(!std::memcmp(buffer_read, buffer_read_c, sizeof(buffer_read_c)));
+  for (int i = 0; i < 10; ++i) {
+    std::cerr << "JOE buffer_read: " << *(static_cast<int*>(buffer_read) + i) << std::endl;
+  }
+
+  REQUIRE(!std::memcmp(buffer_read, buffer_read_c, sizeof(buffer_read_c)));
   CHECK(buffer_read_size == sizeof(buffer_read_c));
 
   // ---- READ AT ZERO TIMESTAMP ----

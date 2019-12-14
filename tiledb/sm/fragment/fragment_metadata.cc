@@ -67,6 +67,7 @@ FragmentMetadata::FragmentMetadata(
     , dense_(dense)
     , fragment_uri_(fragment_uri)
     , timestamp_range_(timestamp_range) {
+
   domain_ = nullptr;
   meta_file_size_ = 0;
   non_empty_domain_ = nullptr;
@@ -79,9 +80,10 @@ FragmentMetadata::FragmentMetadata(
     attribute_idx_map_[attr_name] = i;
     attribute_uri_map_[attr_name] =
         fragment_uri_.join_path(attr_name + constants::file_suffix);
-    if (attributes[i]->var_size())
+    if (attributes[i]->var_size()) {
       attribute_var_uri_map_[attr_name] =
           fragment_uri_.join_path(attr_name + "_var" + constants::file_suffix);
+    }
   }
   attribute_idx_map_[constants::coords] = array_schema_->attribute_num();
   attribute_uri_map_[constants::coords] =
@@ -213,6 +215,7 @@ Status FragmentMetadata::add_max_buffer_sizes(
     const T* subarray,
     std::unordered_map<std::string, std::pair<uint64_t, uint64_t>>*
         buffer_sizes) {
+  //std::cerr << "JOE add_max_buffer_sizes 1" << std::endl;
   if (dense_)
     return add_max_buffer_sizes_dense(encryption_key, subarray, buffer_sizes);
   return add_max_buffer_sizes_sparse(encryption_key, subarray, buffer_sizes);
@@ -224,23 +227,30 @@ Status FragmentMetadata::add_max_buffer_sizes_dense(
     const T* subarray,
     std::unordered_map<std::string, std::pair<uint64_t, uint64_t>>*
         buffer_sizes) {
+  //std::cerr << "JOE add_max_buffer_sizes_dense 1" << std::endl;
   // Calculate the ids of all tiles overlapping with subarray
   auto tids = compute_overlapping_tile_ids(subarray);
+  //std::cerr << "JOE add_max_buffer_sizes_dense 2" << std::endl;
   uint64_t size = 0;
 
   // Compute buffer sizes
   for (auto& tid : tids) {
     for (auto& it : *buffer_sizes) {
+      //std::cerr << "JOE add_max_buffer_sizes_dense 2.1" << std::endl;
       if (array_schema_->var_size(it.first)) {
         auto cell_num = this->cell_num(tid);
         it.second.first += cell_num * constants::cell_var_offset_size;
+        //std::cerr << "JOE add_max_buffer_sizes_dense 2.2" << std::endl;
         RETURN_NOT_OK(tile_var_size(encryption_key, it.first, tid, &size));
+        //std::cerr << "JOE add_max_buffer_sizes_dense 2.3" << std::endl;
         it.second.second += size;
       } else {
         it.second.first += cell_num(tid) * array_schema_->cell_size(it.first);
       }
     }
   }
+
+  //std::cerr << "JOE add_max_buffer_sizes_dense 3" << std::endl;
 
   return Status::Ok();
 }
@@ -252,6 +262,7 @@ Status FragmentMetadata::add_max_buffer_sizes_sparse(
     const T* subarray,
     std::unordered_map<std::string, std::pair<uint64_t, uint64_t>>*
         buffer_sizes) {
+  //std::cerr << "JOE add_max_buffer_sizes_sparse 1" << std::endl;
   RETURN_NOT_OK(load_rtree(encryption_key));
 
   // Get tile overlap
@@ -680,6 +691,7 @@ Status FragmentMetadata::tile_var_size(
     uint64_t* tile_size) {
   auto it = attribute_idx_map_.find(attribute);
   auto attribute_id = it->second;
+  //std::cerr << "JOE tile_var_size 1" << std::endl;
   RETURN_NOT_OK(load_tile_var_sizes(encryption_key, attribute_id));
   *tile_size = tile_var_sizes_[attribute_id][tile_idx];
   return Status::Ok();
@@ -940,12 +952,18 @@ Status FragmentMetadata::load_tile_var_sizes(
   if (loaded_metadata_.tile_var_sizes_[attr_id])
     return Status::Ok();
 
+  //std::cerr << "JOE load_tile_var_sizes 1" << std::endl;
+
   Buffer buff;
   RETURN_NOT_OK(read_generic_tile_from_file(
       encryption_key, gt_offsets_.tile_var_sizes_[attr_id], &buff));
 
+  //std::cerr << "JOE load_tile_var_sizes 2" << std::endl;
+
   ConstBuffer cbuff(&buff);
   RETURN_NOT_OK(load_tile_var_sizes(attr_id, &cbuff));
+
+  //std::cerr << "JOE load_tile_var_sizes 3" << std::endl;
 
   loaded_metadata_.tile_var_sizes_[attr_id] = true;
 
@@ -1430,13 +1448,14 @@ Status FragmentMetadata::load_v2(const EncryptionKey& encryption_key) {
   TileIO tile_io(storage_manager_, fragment_metadata_uri);
   auto tile = (Tile*)nullptr;
   RETURN_NOT_OK(tile_io.read_generic(&tile, 0, encryption_key));
-  tile->disown_buff();
-  auto buff = tile->buffer();
+  //tile->disown_buff();
+  //std::cerr << "JOE load_v2 " << std::endl;
+  Buffer buff(*tile->buffer2());
   STATS_COUNTER_ADD(fragment_metadata_bytes_read, tile_io.file_size());
   delete tile;
 
   // Deserialize
-  ConstBuffer cbuff(buff);
+  ConstBuffer cbuff(&buff);
   RETURN_NOT_OK(load_version(&cbuff));
   RETURN_NOT_OK(load_non_empty_domain(&cbuff));
   RETURN_NOT_OK(load_mbrs(&cbuff));
@@ -1448,8 +1467,6 @@ Status FragmentMetadata::load_v2(const EncryptionKey& encryption_key) {
   RETURN_NOT_OK(load_file_sizes(&cbuff));
   RETURN_NOT_OK(load_file_var_sizes(&cbuff));
   RETURN_NOT_OK(create_rtree());
-
-  delete buff;
 
   return Status::Ok();
 }
@@ -1685,10 +1702,20 @@ Status FragmentMetadata::read_generic_tile_from_file(
 
   // Read metadata
   TileIO tile_io(storage_manager_, fragment_metadata_uri);
-  auto tile = (Tile*)nullptr;
+  Tile *tile = nullptr;
+  //std::cerr << "JOE FragmentMetadata::read_generic_tile_from_file 1" << std::endl;
   RETURN_NOT_OK(tile_io.read_generic(&tile, offset, encryption_key));
-  tile->buffer()->swap(*buff);
+  //std::cerr << "JOE read_generic_tile_from_file " << std::endl;
+
+  const auto chunked_buffer = tile->chunked_buffer();
+  buff->realloc(chunked_buffer->size());
+  buff->set_size(chunked_buffer->size());
+  RETURN_NOT_OK_ELSE(
+    chunked_buffer->read(buff->data(), buff->size(), 0),
+    delete tile);
   delete tile;
+
+  //std::cerr << "JOE read_generic_tile_from_file 2" << std::endl;
 
   return Status::Ok();
 }
@@ -1702,21 +1729,37 @@ Status FragmentMetadata::read_file_footer(Buffer* buff) const {
   RETURN_NOT_OK(get_footer_offset_and_size(&footer_offset, &footer_size));
 
   // Read footer
+  //std::cerr << "JOE FragmentMetadata::read_file_footer 1 " << std::endl;
   return storage_manager_->read(
       fragment_metadata_uri, footer_offset, buff, footer_size);
 }
 
 Status FragmentMetadata::write_generic_tile_to_file(
     const EncryptionKey& encryption_key, Buffer* buff, uint64_t* nbytes) const {
+
+  // TODO: we should convert 'buff' from a raw-ptr to a move to make it clear
+  // that we own it in this routine.
+
   URI fragment_metadata_uri = fragment_uri_.join_path(
       std::string(constants::fragment_metadata_filename));
-  buff->reset_offset();
+
+  ChunkedBuffer *const chunked_buffer = new ChunkedBuffer();
+  RETURN_NOT_OK_ELSE(
+    Tile::buffer_to_contigious_fixed_chunks(
+      *buff,
+      0,
+      constants::generic_tile_cell_size,
+      chunked_buffer),
+    delete chunked_buffer);
+  buff->disown_data();
+
   Tile tile(
       constants::generic_tile_datatype,
       constants::generic_tile_cell_size,
       0,
-      buff,
-      false);
+      chunked_buffer,
+      true);
+
   TileIO tile_io(storage_manager_, fragment_metadata_uri);
   RETURN_NOT_OK(tile_io.write_generic(&tile, encryption_key, nbytes));
 
@@ -1735,6 +1778,7 @@ Status FragmentMetadata::store_tile_offsets(
     unsigned attr_id, const EncryptionKey& encryption_key, uint64_t* nbytes) {
   Buffer buff;
   RETURN_NOT_OK(write_tile_offsets(attr_id, &buff));
+  //std::cerr << "JOE attr_id " << attr_id << ", buff.size() " << buff.size() << std::endl;
   RETURN_NOT_OK(write_generic_tile_to_file(encryption_key, &buff, nbytes));
 
   return Status::Ok();
@@ -1745,6 +1789,7 @@ Status FragmentMetadata::write_tile_offsets(unsigned attr_id, Buffer* buff) {
 
   // Write number of tile offsets
   uint64_t tile_offsets_num = tile_offsets_[attr_id].size();
+  //std::cerr << "JOE write_tile_offsets tile_offsets_num: " << tile_offsets_num << std::endl;
   st = buff->write(&tile_offsets_num, sizeof(uint64_t));
   if (!st.ok()) {
     return LOG_STATUS(Status::FragmentMetadataError(
@@ -1754,6 +1799,10 @@ Status FragmentMetadata::write_tile_offsets(unsigned attr_id, Buffer* buff) {
 
   // Write tile offsets
   if (tile_offsets_num != 0) {
+    //for (const auto& offset : tile_offsets_[attr_id]) {
+      //std::cerr << "JOE write_tile_offsets tile_offsets_[attr_id]: " << offset << std::endl;
+    //}
+
     st = buff->write(
         &tile_offsets_[attr_id][0], tile_offsets_num * sizeof(uint64_t));
     if (!st.ok()) {

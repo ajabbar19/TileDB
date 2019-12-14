@@ -180,6 +180,7 @@ Status VFS::dir_size(const URI& dir_name, uint64_t* dir_size) const {
     for (const auto& child : children) {
       RETURN_NOT_OK(this->is_file(child, &is_file));
       if (is_file) {
+        //std::cerr << "JOE dir_size 1 " << std::endl;
         RETURN_NOT_OK(file_size(child, &size));
         *dir_size += size;
       } else {
@@ -566,6 +567,8 @@ Status VFS::max_parallel_ops(const URI& uri, uint64_t* ops) const {
 }
 
 Status VFS::file_size(const URI& uri, uint64_t* size) const {
+  //std::cerr << "JOE file_size 1 " << uri.to_string() << std::endl;
+
   STATS_FUNC_IN(vfs_file_size);
 
   if (!init_)
@@ -784,7 +787,7 @@ Status VFS::ls(const URI& parent, std::vector<URI>* uris) const {
         Status::VFSError("Unsupported URI scheme: " + parent.to_string()));
   }
   parallel_sort(paths.begin(), paths.end());
-  for (auto& path : paths) {
+  for (const auto& path : std::vector<std::string>(paths)) {
     uris->emplace_back(path);
   }
   return Status::Ok();

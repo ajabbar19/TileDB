@@ -100,9 +100,15 @@ Status TileIO::read_generic(
     Tile** tile, uint64_t file_offset, const EncryptionKey& encryption_key) {
   STATS_FUNC_IN(tileio_read_generic);
 
+  //std::cerr << "JOE read_generic 1 " << std::endl;
+
+  //std::cerr << "JOE read_generic 1 file_offset " << file_offset << std::endl;
+
   GenericTileHeader header;
   RETURN_NOT_OK(
       read_generic_tile_header(storage_manager_, uri_, file_offset, &header));
+
+  //std::cerr << "JOE read_generic 2 " << std::endl;
 
   if (encryption_key.encryption_type() !=
       (EncryptionType)header.encryption_type)
@@ -114,29 +120,70 @@ Status TileIO::read_generic(
 
   RETURN_NOT_OK(configure_encryption_filter(&header, encryption_key));
 
-  *tile = new Tile();
-  RETURN_NOT_OK_ELSE(
-      (*tile)->init(
-          header.version_number,
-          (Datatype)header.datatype,
-          header.cell_size,
-          0),
-      delete *tile);
+  //std::cerr << "JOE read_generic 3 " << std::endl;
 
-  auto tile_data_offset =
+  const auto tile_data_offset =
       GenericTileHeader::BASE_SIZE + header.filter_pipeline_size;
 
-  // Read the tile.
-  RETURN_NOT_OK_ELSE(
+  //std::cerr << "JOE read_generic 4 " << std::endl;
+
+
+  // TODO: the following logic depends on the most up to date file format,
+  // should we refactor this into a routine that respects the file version?
+
+  // Read the number of chunks.
+  uint64_t nchunks;
+  RETURN_NOT_OK(
       storage_manager_->read(
           uri_,
           file_offset + tile_data_offset,
-          (*tile)->buffer(),
-          header.persisted_size),
-      delete *tile);
+          &nchunks,
+          sizeof(uint64_t)));
+
+  //std::cerr << "JOE nchunks " << nchunks << std::endl;
+
+  // Read all filtered chunks into a single buffer, skipping the first 8 bytes
+  // to ignore the leading uint64_t that contains the number of chunks.
+  Buffer buffer;
+  RETURN_NOT_OK(
+      storage_manager_->read(
+          uri_,
+          file_offset + tile_data_offset + sizeof(uint64_t),
+          &buffer,
+          header.persisted_size - sizeof(uint64_t)));
+
+  //std::cerr << "JOE buffer.size() " << buffer.size() << std::endl;
+
+  //std::cerr << "JOE header.persisted_size " << header.persisted_size << std::endl;
+
+  // Create a contigious chunked buffer to represent the filtered chunks,
+  // taking ownership the buffer's data.
+  ChunkedBuffer *const chunked_buffer = new ChunkedBuffer();
+  RETURN_NOT_OK_ELSE(
+    Tile::filtered_buffer_to_contigious_chunks(buffer.data(), nchunks, chunked_buffer),
+    delete chunked_buffer);
+  buffer.disown_data();
+
+  //std::cerr << "JOE about to init tile " << std::endl;
+  //std::cerr << "JOE chunked_buffer()->capacity() " <<  chunked_buffer->capacity() << std::endl;
+
+  // Instantiate a new tile with the chunked buffer. The tile will take
+  // ownership of the buffer.
+  assert(tile);
+  *tile = new Tile(
+    header.version_number,
+    (Datatype)header.datatype,
+    header.cell_size,
+    0,
+    chunked_buffer,
+    true);
+
+  //std::cerr << "JOE tile initialized: " << *tile << std::endl;
 
   // Filter
   RETURN_NOT_OK_ELSE(header.filters.run_reverse(*tile), delete *tile);
+
+  //std::cerr << "JOE tile reversed " << *tile << std::endl;
 
   file_size_ = header.persisted_size;
   STATS_COUNTER_ADD(tileio_read_num_bytes_read, header.persisted_size);
@@ -154,6 +201,8 @@ Status TileIO::read_generic_tile_header(
     GenericTileHeader* header) {
   // Read the fixed-sized part of the header from file
   std::unique_ptr<Buffer> header_buff(new Buffer());
+  //std::cerr << "JOE read_generic_tile_header file_offset " << file_offset << std::endl;
+  //std::cerr << "JOE read_generic_tile_header GenericTileHeader::BASE_SIZE " << GenericTileHeader::BASE_SIZE << std::endl;
   RETURN_NOT_OK(sm->read(
       uri, file_offset, header_buff.get(), GenericTileHeader::BASE_SIZE));
 
@@ -166,6 +215,14 @@ Status TileIO::read_generic_tile_header(
   RETURN_NOT_OK(header_buff->read(&header->encryption_type, sizeof(uint8_t)));
   RETURN_NOT_OK(
       header_buff->read(&header->filter_pipeline_size, sizeof(uint32_t)));
+
+  //std::cerr << "JOE header->version_number " << header->version_number << std::endl;
+  //std::cerr << "JOE header->persisted_size " << header->persisted_size << std::endl;
+  //std::cerr << "JOE header->tile_size " << header->tile_size << std::endl;
+  //std::cerr << "JOE header->datatype " << header->datatype << std::endl;
+  //std::cerr << "JOE header->cell_size " << header->cell_size << std::endl;
+  //std::cerr << "JOE header->encryption_type " << header->encryption_type << std::endl;
+  //std::cerr << "JOE header->filter_pipeline_size " << header->filter_pipeline_size << std::endl;
 
   // Read header filter pipeline.
   header_buff->reset_size();
@@ -198,12 +255,28 @@ Status TileIO::write_generic(
   GenericTileHeader header;
   RETURN_NOT_OK(init_generic_tile_header(tile, &header, encryption_key));
 
+  //std::cerr << "JOE write_generic size before filter: " << tile->chunked_buffer()->size() << std::endl;
+  //std::cerr << "JOE write_generic size before filter: " << tile->size() << std::endl;
+
+  uint32_t todo_tmp_1;
+  RETURN_NOT_OK(tile->chunked_buffer()->internal_buffer_size(0, &todo_tmp_1));
+  //std::cerr << "JOE write_generic internal_buffer_size before filter: " << todo_tmp_1 << std::endl;
+
   // Filter tile
   RETURN_NOT_OK(header.filters.run_forward(tile));
-  header.persisted_size = tile->buffer()->size();
+  header.persisted_size = sizeof(uint64_t) + tile->size();
 
   RETURN_NOT_OK(write_generic_tile_header(&header));
-  RETURN_NOT_OK(storage_manager_->write(uri_, tile->buffer()));
+
+  // Write the number of chunks.
+  uint64_t nchunks = static_cast<uint64_t>(tile->chunked_buffer()->nchunks());
+  RETURN_NOT_OK(storage_manager_->write(uri_, &nchunks, sizeof(uint64_t)));
+
+  // Write the filtered tile buffer. The chunked buffer is always contigious
+  // after invoking 'run_forward'.
+  void *tile_buffer;
+  RETURN_NOT_OK(tile->chunked_buffer()->get_contigious(&tile_buffer));
+  RETURN_NOT_OK(storage_manager_->write(uri_, tile_buffer, tile->chunked_buffer()->size()));
 
   file_size_ = header.persisted_size;
   STATS_COUNTER_ADD(tileio_write_num_bytes_written, header.persisted_size);
@@ -232,6 +305,8 @@ Status TileIO::write_generic_tile_header(GenericTileHeader* header) {
   RETURN_NOT_OK_ELSE(
       buff->write(&header->encryption_type, sizeof(uint8_t)), delete buff);
 
+  //std::cerr << "JOE writing header->persisted_size " << header->persisted_size << std::endl;
+
   // Write placeholder value for pipeline size.
   uint64_t pipeline_size_offset = buff->offset();
   RETURN_NOT_OK_ELSE(
@@ -248,8 +323,13 @@ Status TileIO::write_generic_tile_header(GenericTileHeader* header) {
   *(static_cast<uint32_t*>(buff->value_ptr(pipeline_size_offset))) =
       header->filter_pipeline_size;
 
+  //std::cerr << "JOE writing header->filter_pipeline_size " << header->filter_pipeline_size << std::endl;
+
+  //std::cerr << "JOE to " << uri_.to_string() << std::endl;
+
   // Write buffer to file
   Status st = storage_manager_->write(uri_, buff);
+
 
   STATS_COUNTER_ADD(tileio_write_num_input_bytes, buff->size());
   STATS_COUNTER_ADD(tileio_write_num_bytes_written, buff->size());

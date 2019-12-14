@@ -966,22 +966,10 @@ class Reader {
       const std::string& attr,
       const std::vector<ResultTile*>& result_tiles) const;
 
-  /**
-   * Retrieves the tiles on a particular attribute and stores it in the
-   * appropriate result tile.
-   *
-   * The reads are done asynchronously, and futures for each read operation are
-   * added to the output parameter.
-   *
-   * @param attribute The attribute name.
-   * @param result_tiles The retrieved tiles will be stored inside the
-   *     `ResultTile` instances in this vector.
-   * @param tasks Vector to hold futures for the read tasks.
-   * @return Status
-   */
+  // TODO
   Status read_tiles(
-      const std::string& attribute,
-      const std::vector<ResultTile*>& result_tiles,
+      const std::unordered_map<Tile*, std::unique_ptr<Buffer>>& tile_to_buffer,
+      const std::unordered_map<URI, std::vector<std::pair<uint64_t, Tile*>>, URIHasher>& uri_to_region,
       std::vector<std::future<Status>>* tasks) const;
 
   /**

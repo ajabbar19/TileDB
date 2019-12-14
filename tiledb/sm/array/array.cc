@@ -130,6 +130,7 @@ Status Array::open(
     EncryptionType encryption_type,
     const void* encryption_key,
     uint32_t key_length) {
+
   std::unique_lock<std::mutex> lck(mtx_);
 
   if (is_open_)
@@ -235,6 +236,7 @@ Status Array::open(
     EncryptionType encryption_type,
     const void* encryption_key,
     uint32_t key_length) {
+  //std::cerr << "JOE Array::open 1" << std::endl;
   std::unique_lock<std::mutex> lck(mtx_);
 
   if (is_open_)
@@ -244,6 +246,8 @@ Status Array::open(
   if (remote_ && encryption_type != EncryptionType::NO_ENCRYPTION)
     return LOG_STATUS(Status::ArrayError(
         "Cannot open array; encrypted remote arrays are not supported."));
+
+  //std::cerr << "JOE Array::open 2" << std::endl;
 
   // Copy the key bytes.
   RETURN_NOT_OK(
@@ -270,10 +274,14 @@ Status Array::open(
         &fragment_metadata_,
         &metadata_));
   } else {
+    //std::cerr << "JOE Array::open 4" << std::endl;
     RETURN_NOT_OK(storage_manager_->array_open_for_writes(
         array_uri_, encryption_key_, &array_schema_));
+    //std::cerr << "JOE Array::open 5" << std::endl;
     metadata_.reset();  // Resets metadata with a new timestamp
   }
+
+  //std::cerr << "JOE Array::open 6" << std::endl;
 
   query_type_ = query_type;
   is_open_ = true;
@@ -370,6 +378,8 @@ Status Array::get_max_buffer_size(
     const char* attribute, const void* subarray, uint64_t* buffer_size) {
   std::unique_lock<std::mutex> lck(mtx_);
 
+  //std::cerr << "JOE get_max_buffer_size 1" << std::endl;
+
   // Check if array is open
   if (!is_open_)
     return LOG_STATUS(
@@ -388,10 +398,14 @@ Status Array::get_max_buffer_size(
 
   RETURN_NOT_OK(compute_max_buffer_sizes(subarray));
 
+  //std::cerr << "JOE get_max_buffer_size 2" << std::endl;
+
   // Normalize attribute name
   std::string norm_attribute;
   RETURN_NOT_OK(
       ArraySchema::attribute_name_normalized(attribute, &norm_attribute));
+
+  //std::cerr << "JOE get_max_buffer_size 3" << std::endl;
 
   // Check if attribute exists
   auto it = last_max_buffer_sizes_.find(norm_attribute);
@@ -406,6 +420,8 @@ Status Array::get_max_buffer_size(
         std::string("Cannot get max buffer size; Attribute '") +
         norm_attribute + "' is var-sized"));
 
+  //std::cerr << "JOE get_max_buffer_size 4" << std::endl;
+
   // Retrieve buffer size
   *buffer_size = it->second.first;
 
@@ -419,6 +435,8 @@ Status Array::get_max_buffer_size(
     uint64_t* buffer_val_size) {
   std::unique_lock<std::mutex> lck(mtx_);
 
+  //std::cerr << "JOE get_max_buffer_size 5" << std::endl;
+
   // Check if array is open
   if (!is_open_)
     return LOG_STATUS(
@@ -430,12 +448,18 @@ Status Array::get_max_buffer_size(
         Status::ArrayError("Cannot get max buffer size; "
                            "Array was not opened in read mode"));
 
+  //std::cerr << "JOE get_max_buffer_size 5.1" << std::endl;
+
   // Check if attribute is null
   if (attribute == nullptr)
     return LOG_STATUS(
         Status::ArrayError("Cannot get max buffer size; Attribute is null"));
 
+  //std::cerr << "JOE get_max_buffer_size 5.2" << std::endl;
+
   RETURN_NOT_OK(compute_max_buffer_sizes(subarray));
+
+  //std::cerr << "JOE get_max_buffer_size 6" << std::endl;
 
   // Normalize attribute name
   std::string norm_attribute;
@@ -454,6 +478,8 @@ Status Array::get_max_buffer_size(
     return LOG_STATUS(Status::ArrayError(
         std::string("Cannot get max buffer size; Attribute '") +
         norm_attribute + "' is fixed-sized"));
+
+  //std::cerr << "JOE get_max_buffer_size 7" << std::endl;
 
   // Retrieve buffer sizes
   *buffer_off_size = it->second.first;
@@ -683,6 +709,7 @@ void Array::clear_last_max_buffer_sizes() {
 }
 
 Status Array::compute_max_buffer_sizes(const void* subarray) {
+  //std::cerr << "JOE compute_max_buffer_sizes 1" << std::endl;
   // Allocate space for max buffer sizes subarray
   auto subarray_size = 2 * array_schema_->coords_size();
   if (last_max_buffer_sizes_subarray_ == nullptr) {
@@ -691,6 +718,8 @@ Status Array::compute_max_buffer_sizes(const void* subarray) {
       return LOG_STATUS(Status::ArrayError(
           "Cannot compute max buffer sizes; Subarray allocation failed"));
   }
+
+  //std::cerr << "JOE compute_max_buffer_sizes 2" << std::endl;
 
   // Compute max buffer sizes
   if (last_max_buffer_sizes_.empty() ||
@@ -706,6 +735,7 @@ Status Array::compute_max_buffer_sizes(const void* subarray) {
           std::pair<uint64_t, uint64_t>(0, 0);
     last_max_buffer_sizes_[constants::coords] =
         std::pair<uint64_t, uint64_t>(0, 0);
+    //std::cerr << "JOE compute_max_buffer_sizes 3" << std::endl;
     RETURN_NOT_OK(compute_max_buffer_sizes(subarray, &last_max_buffer_sizes_));
   }
 
@@ -719,6 +749,7 @@ Status Array::compute_max_buffer_sizes(
     const void* subarray,
     std::unordered_map<std::string, std::pair<uint64_t, uint64_t>>*
         buffer_sizes) const {
+  //std::cerr << "JOE compute_max_buffer_sizes 4" << std::endl;
   if (remote_) {
     auto rest_client = storage_manager_->rest_client();
     if (rest_client == nullptr)
@@ -792,15 +823,20 @@ Status Array::compute_max_buffer_sizes(
     const T* subarray,
     std::unordered_map<std::string, std::pair<uint64_t, uint64_t>>*
         max_buffer_sizes) const {
+  //std::cerr << "JOE compute_max_buffer_sizes 5" << std::endl;
   // Sanity check
   assert(!fragment_metadata_.empty());
 
   // First we calculate a rough upper bound. Especially for dense
   // arrays, this will not be accurate, as it accounts only for the
   // non-empty regions of the subarray.
-  for (auto& meta : fragment_metadata_)
+  for (auto& meta : fragment_metadata_) {
+    //std::cerr << "JOE compute_max_buffer_sizes 5.1" << std::endl;
     RETURN_NOT_OK(meta->add_max_buffer_sizes(
         encryption_key_, subarray, max_buffer_sizes));
+  }
+
+  //std::cerr << "JOE compute_max_buffer_sizes 6" << std::endl;
 
   // Rectify bound for dense arrays
   if (array_schema_->dense()) {
@@ -819,6 +855,8 @@ Status Array::compute_max_buffer_sizes(
       }
     }
   }
+
+  //std::cerr << "JOE compute_max_buffer_sizes 7" << std::endl;
 
   // Rectify bound for sparse arrays with integer domain
   if (!array_schema_->dense() &&
@@ -840,6 +878,8 @@ Status Array::compute_max_buffer_sizes(
       }
     }
   }
+
+  //std::cerr << "JOE compute_max_buffer_sizes 8" << std::endl;
 
   return Status::Ok();
 }

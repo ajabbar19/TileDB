@@ -199,6 +199,7 @@ QueryBuffer Query::buffer(const std::string& name) const {
 }
 
 Status Query::finalize() {
+  //std::cerr << "JOE Query::finalize 1" << std::endl;
   if (status_ == QueryStatus::UNINITIALIZED)
     return Status::Ok();
 
@@ -377,6 +378,8 @@ Status Query::check_var_attr_offsets(
 }
 
 Status Query::process() {
+  //std::cerr << "JOE Query::process 1" << std::endl;
+
   if (status_ == QueryStatus::UNINITIALIZED)
     return LOG_STATUS(
         Status::QueryError("Cannot process query; Query is not initialized"));
@@ -384,13 +387,20 @@ Status Query::process() {
 
   // Process query
   Status st = Status::Ok();
-  if (type_ == QueryType::READ)
+  if (type_ == QueryType::READ) {
+    //std::cerr << "JOE Query::process 2" << std::endl;
     st = reader_.read();
-  else  // WRITE MODE
+  }
+  else { // WRITE MODE
+    //std::cerr << "JOE Query::process 3" << std::endl;
     st = writer_.write();
+  }
+
+  //std::cerr << "JOE Query::process 4" << std::endl;
 
   // Handle error
   if (!st.ok()) {
+    LOG_STATUS(st);
     status_ = QueryStatus::FAILED;
     return st;
   }
@@ -406,6 +416,8 @@ Status Query::process() {
   } else {  // Incomplete
     status_ = QueryStatus::INCOMPLETE;
   }
+
+  //std::cerr << "JOE Query::process 5" << std::endl;
 
   return Status::Ok();
 }
@@ -443,9 +455,15 @@ Status Query::set_buffer(
     void* buffer_val,
     uint64_t* buffer_val_size,
     bool check_null_buffers) {
-  if (type_ == QueryType::WRITE)
+
+  //std::cerr << "JOE Query::set_buffer 1" << std::endl;
+
+  if (type_ == QueryType::WRITE) {
+    //std::cerr << "JOE Query::set_buffer 2" << std::endl;
     return writer_.set_buffer(
         attribute, buffer_off, buffer_off_size, buffer_val, buffer_val_size);
+  }
+  //std::cerr << "JOE Query::set_buffer 3" << std::endl;
   return reader_.set_buffer(
       attribute,
       buffer_off,
@@ -506,6 +524,8 @@ Status Query::set_subarray(const Subarray& subarray) {
 }
 
 Status Query::submit() {
+  //std::cerr << "JOE Query::submit 1" << std::endl;
+
   // Do not resubmit completed reads.
   if (type_ == QueryType::READ && status_ == QueryStatus::COMPLETED) {
     return Status::Ok();
@@ -521,6 +541,7 @@ Status Query::submit() {
     return rest_client->submit_query_to_rest(array_->array_uri(), this);
   }
   RETURN_NOT_OK(init());
+  //std::cerr << "JOE Query::submit 2" << std::endl;
   return storage_manager_->query_submit(this);
 }
 

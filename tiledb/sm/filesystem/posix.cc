@@ -294,7 +294,7 @@ Status Posix::ls(
   while ((next_path = readdir(dir)) != nullptr) {
     if (!strcmp(next_path->d_name, ".") || !strcmp(next_path->d_name, ".."))
       continue;
-    auto abspath = path + "/" + next_path->d_name;
+    std::string abspath = path + "/" + next_path->d_name;
     paths->push_back(abspath);
   }
   // close parent directory
@@ -375,7 +375,11 @@ Status Posix::read(
     uint64_t nbytes) const {
   // Checks
   uint64_t file_size;
+  //std::cerr << "JOE Posix::read path " << path << std::endl;
+  //std::cerr << "JOE Posix::read offset " << offset << std::endl;
+  //std::cerr << "JOE Posix::read nbytes " << nbytes << std::endl;
   RETURN_NOT_OK(this->file_size(path, &file_size));
+  //std::cerr << "JOE Posix::read file_size " << file_size << std::endl;
   if (offset + nbytes > file_size)
     return LOG_STATUS(
         Status::IOError("Cannot read from file; Read exceeds file size"));
@@ -461,6 +465,7 @@ Status Posix::write(
   Status st;
   uint64_t file_offset = 0;
   if (is_file(path)) {
+    //std::cerr << "JOE Posix::write 1 " << path << std::endl;
     st = file_size(path, &file_offset);
     if (!st.ok()) {
       std::stringstream errmsg;

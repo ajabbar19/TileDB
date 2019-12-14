@@ -651,7 +651,8 @@ Status Reader::compute_range_result_coords(
   assert(dim_num == range.size());
   const auto& t = tile->attr_tiles_.find(constants::coords)->second.first;
   auto coords_num = t.cell_num();
-  auto c = (T*)t.internal_data();
+  //std::cerr << "JOE tile internaldata2 3" << std::endl;
+  auto c = (T*)t.internal_data2();
 
   for (uint64_t i = 0, pos = 0; i < coords_num; ++i, pos += dim_num) {
     if (utils::geometry::coords_in_rect<T>(&c[pos], range, dim_num) &&
@@ -1002,6 +1003,12 @@ Status Reader::copy_var_cells(
   std::vector<std::vector<uint64_t>> offset_offsets_per_cs;
   std::vector<std::vector<uint64_t>> var_offsets_per_cs;
   uint64_t total_offset_size, total_var_size;
+  //std::cerr << "JOE attribute " << attribute << std::endl;
+  //std::cerr << "JOE stride " << stride << std::endl;
+  //std::cerr << "JOE result_cell_slabs.size() " << result_cell_slabs.size() << std::endl;
+  //for (const auto& cs : result_cell_slabs) {
+    //std::cerr << "JOE cs " << cs.start_ << ", " << cs.length_ << std::endl;
+  //}
   RETURN_NOT_OK(compute_var_cell_destinations(
       attribute,
       stride,
@@ -1010,6 +1017,8 @@ Status Reader::copy_var_cells(
       &var_offsets_per_cs,
       &total_offset_size,
       &total_var_size));
+
+  //std::cerr << "JOE copy_var_cells 1" << std::endl;
 
   // Check for overflow and return early (without copying) in that case.
   if (total_offset_size > *buffer_size || total_var_size > *buffer_var_size) {
@@ -1025,16 +1034,25 @@ Status Reader::copy_var_cells(
     const auto& var_offsets = var_offsets_per_cs[cs_idx];
 
     // Get tile information, if the range is nonempty.
-    uint64_t* tile_offsets = nullptr;
+    std::vector<uint64_t> tile_offsets;
     Tile* tile_var = nullptr;
     uint64_t tile_cell_num = 0;
     if (cs.tile_ != nullptr) {
       std::pair<tiledb::sm::Tile, tiledb::sm::Tile>* const tile_pair =
           &cs.tile_->attr_tiles_.find(attribute)->second;
-      Tile* const tile = &tile_pair->first;
+      const auto& tile = &tile_pair->first;
       tile_var = &tile_pair->second;
-      tile_offsets = (uint64_t*)tile->internal_data();
       tile_cell_num = tile->cell_num();
+
+      // Build the tile offsets.
+      tile_offsets.reserve(tile_cell_num);
+      uint64_t tile_offset;
+      uint64_t read_offset = 0;
+      for (size_t cell_idx = 0; cell_idx < tile_cell_num; ++cell_idx) {
+        RETURN_NOT_OK(tile->read(&tile_offset, sizeof(uint64_t), read_offset));
+        read_offset += sizeof(uint64_t);
+        tile_offsets.emplace_back(tile_offset);
+      }
     }
 
     // Copy each cell in the range
@@ -1108,16 +1126,26 @@ Status Reader::compute_var_cell_destinations(
     (*var_offsets_per_cs)[cs_idx].resize(cs.length_);
 
     // Get tile information, if the range is nonempty.
-    uint64_t* tile_offsets = nullptr;
+    std::vector<uint64_t> tile_offsets;
     uint64_t tile_cell_num = 0;
     uint64_t tile_var_size = 0;
     if (cs.tile_ != nullptr) {
-      const auto& tile_pair = cs.tile_->attr_tiles_.find(attribute)->second;
-      const auto& tile = tile_pair.first;
-      const auto& tile_var = tile_pair.second;
-      tile_offsets = (uint64_t*)tile.internal_data();
-      tile_cell_num = tile.cell_num();
-      tile_var_size = tile_var.size();
+      std::pair<tiledb::sm::Tile, tiledb::sm::Tile>* const tile_pair =
+          &cs.tile_->attr_tiles_.find(attribute)->second;
+      const auto& tile = &tile_pair->first;
+      const auto& tile_var = &tile_pair->second;
+      tile_cell_num = tile->cell_num();
+      tile_var_size = tile_var->size();
+
+      // Build the tile offsets.
+      tile_offsets.reserve(tile_cell_num);
+      uint64_t tile_offset;
+      uint64_t read_offset = 0;
+      for (size_t cell_idx = 0; cell_idx < tile_cell_num; ++cell_idx) {
+        RETURN_NOT_OK(tile->read(&tile_offset, sizeof(uint64_t), read_offset));
+        read_offset += sizeof(uint64_t);
+        tile_offsets.emplace_back(tile_offset);
+      }
     }
 
     // Compute the destinations for each cell in the range.
@@ -1396,6 +1424,7 @@ Status Reader::dense_read() {
 
     RETURN_CANCEL_OR_ERROR(read_tiles(attr, result_tiles));
     RETURN_CANCEL_OR_ERROR(filter_tiles(attr, result_tiles));
+
     RETURN_CANCEL_OR_ERROR(copy_cells(attr, stride, result_cell_slabs));
     clear_tiles(attr, result_tiles);
   }
@@ -1568,8 +1597,10 @@ Status Reader::filter_tiles(
     if (!t.filtered()) {
       // Decompress, etc.
       RETURN_NOT_OK(filter_tile(attribute, &t, var_size));
-      RETURN_NOT_OK(storage_manager_->write_to_cache(
-          tile_attr_uri, tile_attr_offset, t.buffer()));
+      //std::cerr << "JOE filter_tiles 1: " << tile_attr_offset << std::endl;
+      // TODO fix cache
+      //RETURN_NOT_OK(storage_manager_->write_to_cache(
+      //    tile_attr_uri, tile_attr_offset, t.buffer2()));
     }
 
     if (var_size && !t_var.filtered()) {
@@ -1580,8 +1611,10 @@ Status Reader::filter_tiles(
 
       // Decompress, etc.
       RETURN_NOT_OK(filter_tile(attribute, &t_var, false));
-      RETURN_NOT_OK(storage_manager_->write_to_cache(
-          tile_attr_var_uri, tile_attr_var_offset, t_var.buffer()));
+      //std::cerr << "JOE filter_tiles 2: " << tile_attr_var_offset << std::endl;
+      // TODO fix cache
+      //RETURN_NOT_OK(storage_manager_->write_to_cache(
+      //    tile_attr_var_uri, tile_attr_var_offset, t_var.buffer2()));
     }
 
     return Status::Ok();
@@ -1597,7 +1630,8 @@ Status Reader::filter_tiles(
 
 Status Reader::filter_tile(
     const std::string& attribute, Tile* tile, bool offsets) const {
-  uint64_t orig_size = tile->buffer()->size();
+  uint64_t orig_size = tile->chunked_buffer()->size();
+  //std::cerr << "JOE filter_tile 3: " << orig_size << std::endl;
 
   // Get a copy of the appropriate filter pipeline.
   FilterPipeline filters;
@@ -1618,6 +1652,8 @@ Status Reader::filter_tile(
   tile->set_filtered(true);
   tile->set_pre_filtered_size(orig_size);
 
+  //std::cerr << "JOE filter_tile 4: " << tile->chunked_buffer()->size() << std::endl;
+
   STATS_COUNTER_ADD(reader_num_bytes_after_filtering, tile->size());
 
   return Status::Ok();
@@ -1629,7 +1665,8 @@ Status Reader::get_all_result_coords(
   auto dim_num = array_schema_->dim_num();
   const auto& t = tile->attr_tiles_.find(constants::coords)->second.first;
   auto coords_num = t.cell_num();
-  auto c = (T*)t.internal_data();
+  //std::cerr << "JOE tile internaldata2 2" << std::endl;
+  auto c = (T*)t.internal_data2();
 
   for (uint64_t i = 0; i < coords_num; ++i)
     result_coords->emplace_back(tile, &c[i * dim_num], i);
@@ -1737,55 +1774,41 @@ Status Reader::init_tile(
 }
 
 Status Reader::read_tiles(
-    const std::string& attr,
+    const std::string& attribute,
     const std::vector<ResultTile*>& result_tiles) const {
   // Shortcut for empty tile vec
   if (result_tiles.empty())
     return Status::Ok();
 
-  // Read the tiles asynchronously
-  std::vector<std::future<Status>> tasks;
-  RETURN_CANCEL_OR_ERROR(read_tiles(attr, result_tiles, &tasks));
-
-  // Wait for the reads to finish and check statuses.
-  auto statuses =
-      storage_manager_->reader_thread_pool()->wait_all_status(tasks);
-  for (const auto& st : statuses)
-    RETURN_CANCEL_OR_ERROR(st);
-
-  return Status::Ok();
-}
-
-Status Reader::read_tiles(
-    const std::string& attribute,
-    const std::vector<ResultTile*>& result_tiles,
-    std::vector<std::future<Status>>* tasks) const {
   // For each tile, read from its fragment.
-  bool var_size = array_schema_->var_size(attribute);
-  auto num_tiles = static_cast<uint64_t>(result_tiles.size());
-  auto encryption_key = array_->encryption_key();
+  const bool var_size = array_schema_->var_size(attribute);
+  const auto encryption_key = array_->encryption_key();
 
-  // Populate the list of regions per file to be read.
-  std::map<URI, std::vector<std::tuple<uint64_t, void*, uint64_t>>> all_regions;
-  for (uint64_t i = 0; i < num_tiles; i++) {
-    auto& tile = result_tiles[i];
+  // Build an association between individual tiles and the buffer we will
+  // allocated for reading them. If a tile exists in the cache, we will store
+  // the cached buffer directly in the tile instance. We must also build an
+  // associated between URIs and regions for the VFS::read_all() interface.
+  std::unordered_map<Tile*, std::unique_ptr<Buffer>> tile_to_buffer;
+  std::unordered_map<URI, std::vector<std::pair<uint64_t, Tile*>>, URIHasher> uri_to_region;
+  for (const auto& tile : result_tiles) {
     auto it = tile->attr_tiles_.find(attribute);
-    if (it == tile->attr_tiles_.end())
+    if (it == tile->attr_tiles_.end()) {
       it = tile->attr_tiles_
                .insert(std::pair<std::string, ResultTile::TilePair>(
                    attribute, ResultTile::TilePair(Tile(), Tile())))
                .first;
+    }
 
     // Initialize the tile(s)
-    auto& tile_pair = it->second;
-    auto& t = tile_pair.first;
-    auto& t_var = tile_pair.second;
-    auto& fragment = fragment_metadata_[tile->frag_idx_];
+    ResultTile::TilePair *const tile_pair = &it->second;
+    Tile *const t = &tile_pair->first;
+    Tile *const t_var = &tile_pair->second;
+    FragmentMetadata *const fragment = fragment_metadata_[tile->frag_idx_];
     auto format_version = fragment->format_version();
     if (!var_size) {
-      RETURN_NOT_OK(init_tile(format_version, attribute, &t));
+      RETURN_NOT_OK(init_tile(format_version, attribute, t));
     } else {
-      RETURN_NOT_OK(init_tile(format_version, attribute, &t, &t_var));
+      RETURN_NOT_OK(init_tile(format_version, attribute, t, t_var));
     }
 
     // Get information about the tile in its fragment
@@ -1800,18 +1823,27 @@ Status Reader::read_tiles(
 
     // Try the cache first.
     bool cache_hit;
+    Buffer cached_buffer;
     RETURN_NOT_OK(storage_manager_->read_from_cache(
-        tile_attr_uri, tile_attr_offset, t.buffer(), tile_size, &cache_hit));
+        tile_attr_uri, tile_attr_offset, &cached_buffer, tile_size, &cache_hit));
     if (cache_hit) {
-      t.set_filtered(true);
+      ChunkedBuffer chunked_buffer;
+      RETURN_NOT_OK(
+        Tile::buffer_to_contigious_fixed_chunks(
+          cached_buffer, t->dim_num(), t->cell_size(), &chunked_buffer));
+      cached_buffer.disown_data();
+      t->chunked_buffer()->swap(&chunked_buffer);
+      chunked_buffer.free();
+      t->set_filtered(true);
       STATS_COUNTER_ADD(reader_attr_tile_cache_hits, 1);
     } else {
-      // Add the region of the fragment to be read.
-      RETURN_NOT_OK(t.buffer()->realloc(tile_persisted_size));
-      t.buffer()->set_size(tile_persisted_size);
-      t.buffer()->reset_offset();
-      all_regions[tile_attr_uri].emplace_back(
-          tile_attr_offset, t.buffer()->data(), tile_persisted_size);
+      std::unique_ptr<Buffer> tile_buffer(new Buffer());
+      RETURN_NOT_OK(tile_buffer->realloc(tile_persisted_size));
+      memset(tile_buffer->data(), 0, tile_persisted_size);
+      tile_buffer->set_size(tile_persisted_size);
+      tile_buffer->reset_offset();
+      tile_to_buffer.emplace(t, std::move(tile_buffer));
+      uri_to_region[tile_attr_uri].emplace_back(tile_attr_offset, t);
 
       STATS_COUNTER_ADD(reader_num_tile_bytes_read, tile_persisted_size);
     }
@@ -1831,28 +1863,35 @@ Status Reader::read_tiles(
           tile->tile_idx_,
           &tile_var_persisted_size));
 
+      cached_buffer.clear();
       RETURN_NOT_OK(storage_manager_->read_from_cache(
           tile_attr_var_uri,
           tile_attr_var_offset,
-          t_var.buffer(),
+          &cached_buffer,
           tile_var_size,
           &cache_hit));
 
       if (cache_hit) {
-        t_var.set_filtered(true);
+        ChunkedBuffer chunked_buffer;
+        RETURN_NOT_OK(
+        Tile::buffer_to_contigious_fixed_chunks(
+          cached_buffer, t_var->dim_num(), t_var->cell_size(), &chunked_buffer));
+        cached_buffer.disown_data();
+        t_var->chunked_buffer()->swap(&chunked_buffer);
+        chunked_buffer.free();
+        t_var->set_filtered(true);
         STATS_COUNTER_ADD(reader_attr_tile_cache_hits, 1);
       } else {
-        // Add the region of the fragment to be read.
-        RETURN_NOT_OK(t_var.buffer()->realloc(tile_var_persisted_size));
-        t_var.buffer()->set_size(tile_var_persisted_size);
-        t_var.buffer()->reset_offset();
-        all_regions[tile_attr_var_uri].emplace_back(
-            tile_attr_var_offset,
-            t_var.buffer()->data(),
-            tile_var_persisted_size);
+        std::unique_ptr<Buffer> tile_buffer(new Buffer());
+        RETURN_NOT_OK(tile_buffer->realloc(tile_var_persisted_size));
+        memset(tile_buffer->data(), 0, tile_var_persisted_size);
+        tile_buffer->set_size(tile_var_persisted_size);
+        tile_buffer->reset_offset();
+        tile_to_buffer.emplace(t_var, std::move(tile_buffer));
+        uri_to_region[tile_attr_var_uri].emplace_back(tile_attr_var_offset, t_var);
 
         STATS_COUNTER_ADD(reader_num_tile_bytes_read, tile_var_persisted_size);
-        STATS_COUNTER_ADD(reader_num_var_cell_bytes_read, tile_persisted_size);
+        STATS_COUNTER_ADD(reader_num_var_cell_bytes_read, tile_var_persisted_size);
         STATS_COUNTER_ADD(
             reader_num_var_cell_bytes_read, tile_var_persisted_size);
       }
@@ -1862,20 +1901,89 @@ Status Reader::read_tiles(
     }
   }
 
-  // Enqueue all regions to be read.
-  for (const auto& item : all_regions) {
+  //for (const auto& kv : tile_to_buffer) {
+    //std::cerr << "JOE tile kv: tile : " << kv.first << ", buffer size "
+      //<< kv.second->size() << ", first uint64_t " << *reinterpret_cast<uint64_t *>(kv.second->data()) << std::endl;
+  //}
+
+  // Read the tiles asynchronously
+  std::vector<std::future<Status>> tasks;
+  RETURN_CANCEL_OR_ERROR(read_tiles(tile_to_buffer, uri_to_region, &tasks));
+
+  STATS_COUNTER_ADD(
+      reader_num_attr_tiles_touched, ((var_size ? 2 : 1) * result_tiles.size()));
+
+  // Wait for the reads to finish and check statuses.
+  auto statuses =
+      storage_manager_->reader_thread_pool()->wait_all_status(tasks);
+  for (const auto& st : statuses)
+    RETURN_CANCEL_OR_ERROR(st);
+
+  // TODO: the following makes a copy of every read tile buffer. must refactor out 'aux'.
+  // Convert the contigious buffers to chunk buffers.
+  for (const auto& kv : tile_to_buffer) {
+    Tile *const tile = kv.first;
+    const std::unique_ptr<Buffer>& managed_buffer = kv.second;
+
+    for (size_t i = 0; i < managed_buffer->size(); ++i) {
+      //std::cerr << "JOE   " << (uint32_t)*(static_cast<char*>(managed_buffer->data()) + i) << std::endl;
+    }
+
+    const uint64_t nchunks = managed_buffer->value<uint64_t>(0);
+    //std::cerr << "JOE nchunks " << nchunks << std::endl;
+
+    const uint64_t aux_size = managed_buffer->size() - sizeof(uint64_t);
+    void *const aux = malloc(aux_size);
+    managed_buffer->set_offset(sizeof(uint64_t));
+    RETURN_NOT_OK_ELSE(managed_buffer->read(aux, aux_size), free(aux));
+    ChunkedBuffer chunked_buffer;
+    RETURN_NOT_OK_ELSE(
+      Tile::filtered_buffer_to_contigious_chunks(
+        aux, nchunks, &chunked_buffer),
+      free(aux));
+    managed_buffer->disown_data();
+    tile->chunked_buffer()->swap(&chunked_buffer);
+    chunked_buffer.free();
+  }
+
+  return Status::Ok();
+}
+
+Status Reader::read_tiles(
+    const std::unordered_map<Tile*, std::unique_ptr<Buffer>>& tile_to_buffer,
+    const std::unordered_map<URI, std::vector<std::pair<uint64_t, Tile*>>, URIHasher>& uri_to_region,
+    std::vector<std::future<Status>>* tasks) const {
+
+  // Read the tiles asynchronously
+  for (const auto& kv : uri_to_region) {
+    const URI uri = kv.first;
+    const std::vector<std::pair<uint64_t, Tile*>> *const region_of_tiles = &kv.second;
+
+    std::vector<std::tuple<uint64_t, void*, uint64_t>> region_of_buffers;
+    region_of_buffers.reserve(region_of_tiles->size());
+    for (auto it = region_of_tiles->begin();
+         it != region_of_tiles->end();
+         ++it) {
+
+      const uint64_t offset = it->first;
+      Tile *const tile = it->second;
+      const std::unique_ptr<Buffer>& managed_buffer = tile_to_buffer.at(tile);
+      void *const buffer = managed_buffer->data();
+      const uint64_t buffer_size = managed_buffer->size();
+
+      region_of_buffers.emplace_back(offset, buffer, buffer_size);
+    }
+
     RETURN_NOT_OK(storage_manager_->vfs()->read_all(
-        item.first,
-        item.second,
+        uri,
+        region_of_buffers,
         storage_manager_->reader_thread_pool(),
         tasks));
   }
 
-  STATS_COUNTER_ADD(
-      reader_num_attr_tiles_touched, ((var_size ? 2 : 1) * num_tiles));
-
   return Status::Ok();
 }
+
 
 void Reader::reset_buffer_sizes() {
   for (auto& it : attr_buffers_) {
